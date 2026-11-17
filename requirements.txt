@@ -1,0 +1,4 @@
+# Used by Streamlit Community Cloud to run streamlit_app.py
+.
+streamlit>=1.38
+openpyxl>=3.1

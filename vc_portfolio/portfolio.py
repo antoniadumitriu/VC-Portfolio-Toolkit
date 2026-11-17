@@ -240,6 +240,37 @@ class Portfolio:
     # Builder methods
     # ------------------------------------------------------------------
 
+    @classmethod
+    def from_dataframe(cls, table: pd.DataFrame, seed: Optional[int] = None) -> Portfolio:
+        """
+        Build a portfolio from a table with one row per company.
+
+        See ``parse_portfolio_table`` for the accepted columns and formats.
+        Raises ``PortfolioInputError`` listing every problem found.
+        """
+        clean = parse_portfolio_table(table)
+        companies = [
+            Company(
+                name=r.name,
+                investment_amount=r.investment_amount,
+                stage=r.stage,
+                sector=r.sector,
+                entry_valuation=r.entry_valuation,
+                entry_period=r.entry_year,
+                expected_exit_period=r.exit_year,
+                ownership_pct=r.ownership_pct,
+                reserved_capital=r.reserved_capital,
+            )
+            for r in clean.itertuples(index=False)
+        ]
+        return cls(seed=seed).add_companies(companies)
+
+    @classmethod
+    def from_csv(cls, source: object, seed: Optional[int] = None) -> Portfolio:
+        """Build a portfolio from a CSV path or file-like object."""
+        return cls.from_dataframe(pd.read_csv(source), seed=seed)  # type: ignore[call-overload]
+
+
     def add_company(self, company: Company) -> "Portfolio":
         """Add a single company to the portfolio."""
         self._companies.append(company)
@@ -434,3 +465,177 @@ class Portfolio:
             f"Portfolio(n_companies={len(self._companies)}, "
             f"total_invested=${total:,.0f})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Loading portfolios from tables (CSV, spreadsheets, editable UI tables)
+# ---------------------------------------------------------------------------
+
+REQUIRED_COLUMNS = ["name", "investment_amount", "stage", "entry_year", "exit_year"]
+OPTIONAL_COLUMNS: dict[str, object] = {
+    "sector": "unspecified",
+    "entry_valuation": 0.0,
+    "ownership_pct": 0.0,
+    "reserved_capital": 0.0,
+    "expected_multiple": np.nan,
+}
+TABLE_COLUMNS = REQUIRED_COLUMNS + list(OPTIONAL_COLUMNS)
+
+_COLUMN_ALIASES = {
+    "company": "name",
+    "company_name": "name",
+    "amount": "investment_amount",
+    "investment": "investment_amount",
+    "check_size": "investment_amount",
+    "entry_period": "entry_year",
+    "entry": "entry_year",
+    "exit_period": "exit_year",
+    "expected_exit_period": "exit_year",
+    "expected_exit_year": "exit_year",
+    "exit": "exit_year",
+    "valuation": "entry_valuation",
+    "post_money": "entry_valuation",
+    "ownership": "ownership_pct",
+    "reserves": "reserved_capital",
+    "multiple": "expected_multiple",
+    "exit_multiple": "expected_multiple",
+}
+
+
+class PortfolioInputError(ValueError):
+    """Raised when a portfolio table has problems. ``errors`` lists them all."""
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__("Portfolio input has problems:\n- " + "\n- ".join(errors))
+
+
+def _normalize_key(text: object) -> str:
+    return str(text).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _to_number(value: object) -> float:
+    """Parse numbers like 2000000, '2,000,000', '$2.5M', '15%'."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return float("nan")
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return float(value)
+    text = str(value).strip().replace(",", "").replace("$", "").replace("€", "").replace("£", "")
+    if text == "":
+        return float("nan")
+    scale = 1.0
+    if text[-1] in "kKmMbB%":
+        scale = {"k": 1e3, "m": 1e6, "b": 1e9, "%": 0.01}[text[-1].lower()]
+        text = text[:-1]
+    return float(text) * scale
+
+
+def expected_exit_multiple(stage: str) -> float:
+    """Mean gross exit multiple of the mixture for a stage (analytic)."""
+    p_loss = STAGE_LOSS_RATES.get(stage, 0.40)
+    p_rest = 1.0 - p_loss
+    p_zombie = min(ZOMBIE_CAP, p_rest * ZOMBIE_SHARE)
+    p_lognorm = p_rest * LOGNORMAL_SHARE
+    p_pareto = max(0.0, p_rest - p_zombie - p_lognorm)
+    lognorm_mean = 2.0 * np.exp(0.85**2 / 2)
+    pareto_mean = 1.5 * 2.0 / (1.5 - 1.0)
+    return float(p_zombie * 1.0 + p_lognorm * lognorm_mean + p_pareto * pareto_mean)
+
+
+def parse_portfolio_table(table: pd.DataFrame) -> pd.DataFrame:
+    """
+    Validate and clean a portfolio table.
+
+    Required columns: name, investment_amount, stage, entry_year, exit_year.
+    Optional: sector, entry_valuation, ownership_pct, reserved_capital,
+    expected_multiple. Headers are case-insensitive and common aliases
+    ("company", "amount", "ownership", ...) are accepted. Amounts may be
+    written like "2,000,000" or "$2M"; ownership as 0.15, 15 or "15%".
+    Stages accept forms like "Series A", "pre-seed" or "series_a".
+    Rows that are completely empty are dropped.
+
+    Returns a DataFrame with exactly ``TABLE_COLUMNS``.
+    Raises ``PortfolioInputError`` listing every problem found.
+    """
+    df = table.copy()
+    df.columns = [_COLUMN_ALIASES.get(_normalize_key(c), _normalize_key(c)) for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
+    df = df.dropna(how="all")
+    df = df[~df.apply(lambda r: all(str(v).strip() in ("", "nan", "None") for v in r), axis=1)]
+
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise PortfolioInputError([f"Missing column(s): {', '.join(missing)}"])
+    if df.empty:
+        raise PortfolioInputError(["The portfolio has no companies."])
+
+    for col, default in OPTIONAL_COLUMNS.items():
+        if col not in df.columns:
+            df[col] = default
+
+    errors: list[str] = []
+    rows = []
+    stages = list(STAGE_LOSS_RATES)
+    for i, (_, r) in enumerate(df.iterrows(), start=1):
+        label = f"Row {i}"
+        name = str(r["name"]).strip() if pd.notna(r["name"]) else ""
+        if name:
+            label += f" ({name})"
+        else:
+            errors.append(f"{label}: company name is empty")
+
+        stage = _normalize_key(r["stage"]) if pd.notna(r["stage"]) else ""
+        if stage not in STAGE_LOSS_RATES:
+            errors.append(f"{label}: stage '{r['stage']}' not recognized; use one of {', '.join(stages)}")
+
+        nums: dict[str, float] = {}
+        for col in ["investment_amount", "entry_year", "exit_year", "entry_valuation",
+                    "ownership_pct", "reserved_capital", "expected_multiple"]:
+            try:
+                nums[col] = _to_number(r[col])
+            except (TypeError, ValueError):
+                errors.append(f"{label}: '{r[col]}' is not a number ({col})")
+                nums[col] = float("nan")
+
+        if not nums["investment_amount"] > 0:
+            errors.append(f"{label}: investment_amount must be a positive number")
+        if np.isnan(nums["entry_year"]) or nums["entry_year"] < 0:
+            errors.append(f"{label}: entry_year must be 0 or more (years from fund start)")
+        if np.isnan(nums["exit_year"]):
+            errors.append(f"{label}: exit_year is missing")
+        elif not np.isnan(nums["entry_year"]) and nums["exit_year"] <= nums["entry_year"]:
+            errors.append(f"{label}: exit_year must be after entry_year")
+
+        for col in ["entry_valuation", "reserved_capital"]:
+            if np.isnan(nums[col]):
+                nums[col] = 0.0
+            elif nums[col] < 0:
+                errors.append(f"{label}: {col} cannot be negative")
+        own = 0.0 if np.isnan(nums["ownership_pct"]) else nums["ownership_pct"]
+        if own > 1:
+            own /= 100.0  # entered as a percentage, e.g. 15
+        if not 0 <= own <= 1:
+            errors.append(f"{label}: ownership_pct must be between 0 and 100%")
+        mult = nums["expected_multiple"]
+        if not np.isnan(mult) and mult < 0:
+            errors.append(f"{label}: expected_multiple cannot be negative")
+
+        sector = str(r["sector"]).strip() if pd.notna(r["sector"]) and str(r["sector"]).strip() else "unspecified"
+        rows.append(
+            {
+                "name": name,
+                "investment_amount": nums["investment_amount"],
+                "stage": stage,
+                "entry_year": nums["entry_year"],
+                "exit_year": nums["exit_year"],
+                "sector": sector,
+                "entry_valuation": nums["entry_valuation"],
+                "ownership_pct": own,
+                "reserved_capital": nums["reserved_capital"],
+                "expected_multiple": mult,
+            }
+        )
+
+    if errors:
+        raise PortfolioInputError(errors)
+    return pd.DataFrame(rows, columns=TABLE_COLUMNS)
