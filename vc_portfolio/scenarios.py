@@ -423,9 +423,11 @@ class SensitivityAnalysis:
         for each parameter.
 
         Returns a DataFrame with columns: parameter, low_value, high_value,
-        swing, sorted by swing (largest first).
+        base_value (metric with every assumption at 1.0), swing; sorted by
+        swing (largest first).
         """
         rows = []
+        base_val = _extract_metric(self._simulate_with_adjustment("return_adjustment", 1.0), metric)
         for param in parameters:
             low_val = _extract_metric(self._simulate_with_adjustment(param, 1.0 - pct_change), metric)
             high_val = _extract_metric(self._simulate_with_adjustment(param, 1.0 + pct_change), metric)
@@ -434,6 +436,7 @@ class SensitivityAnalysis:
                     "parameter": param,
                     "low_value": low_val,
                     "high_value": high_val,
+                    "base_value": base_val,
                     "swing": abs(high_val - low_val),
                 }
             )

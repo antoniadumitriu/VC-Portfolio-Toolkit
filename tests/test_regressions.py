@@ -185,8 +185,9 @@ class TestSensitivity:
         irr = sa.tornado(["holding_period"], metric="irr_p50")
         assert moic["swing"].iloc[0] == pytest.approx(0.0)
         assert irr["swing"].iloc[0] > 0.005
-        # Longer holds lower the IRR
-        assert irr["high_value"].iloc[0] < irr["low_value"].iloc[0]
+        # Longer holds lower the IRR, and the base sits between the two
+        row = irr.iloc[0]
+        assert row["high_value"] < row["base_value"] < row["low_value"]
 
 
 # ---------------------------------------------------------------------------

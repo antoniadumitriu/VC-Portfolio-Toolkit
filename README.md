@@ -19,6 +19,52 @@ A polished, installable Python library for VC fund portfolio analysis. Models fu
 
 ---
 
+## Interactive app
+
+Analyze any portfolio in the browser: start from a sample, edit the table directly, or upload a CSV or Excel file with one row per company.
+
+```bash
+pip install -e ".[app]"
+streamlit run streamlit_app.py
+```
+
+What it shows:
+- **Return distribution**: simulated MOIC and IRR, percentiles, chance of losing money or returning 3x+, 95% VaR and CVaR
+- **Scenarios**: Bear / Base / Bull with adjustable exit multiples, loss rates and exit timing
+- **Sensitivity**: tornado chart of which assumption moves median IRR, MOIC or loss probability most
+- **J-curve**: quarterly fund value with fees, from each company's expected multiple (or the stage average)
+- **Portfolio**: breakdown by stage or sector, concentration
+
+Every table and result can be downloaded as CSV. Uploaded data lives only in the browser session and is never stored.
+
+**Input format** (see `examples/sample_portfolio.csv`, or download the template in the app):
+
+| Column | Required | Notes |
+|---|---|---|
+| `name` | yes | |
+| `investment_amount` | yes | `2000000`, `2,000,000` or `$2M` |
+| `stage` | yes | `pre_seed`, `seed`, `series_a`, `series_b`, `series_c`, `growth` ("Series A" also works) |
+| `entry_year`, `exit_year` | yes | years from fund start, fractions allowed |
+| `sector` | no | |
+| `entry_valuation`, `reserved_capital` | no | |
+| `ownership_pct` | no | `0.15`, `15` or `15%` |
+| `expected_multiple` | no | J-curve only; blank uses the stage average |
+
+Common header variants (`Company`, `Amount`, `Ownership`, `Exit Year`, ...) are recognized. Problems are reported row by row.
+
+The same loader works in Python:
+
+```python
+from vc_portfolio import Portfolio
+portfolio = Portfolio.from_csv("my_portfolio.csv", seed=42)
+```
+
+### Deploying
+
+The repo is ready for [Streamlit Community Cloud](https://streamlit.io/cloud) (free): create an app from this repository with `streamlit_app.py` as the main file. `requirements.txt` installs the library and the app's dependencies, and `.streamlit/config.toml` sets the theme.
+
+---
+
 ## Installation
 
 ```bash
@@ -139,6 +185,7 @@ Unidirectional dependencies — `metrics.py` is pure math with no library import
 | `jcurve.py` | NAV projection | `JCurve`, `CompanyTimeline` |
 | `scenarios.py` | Monte Carlo orchestration | `ScenarioSet`, `MonteCarloSimulator`, `SensitivityAnalysis` |
 | `visualization.py` | Plotly figure factories | 8 chart functions |
+| `streamlit_app.py` | Interactive web app | |
 
 ---
 

@@ -1,0 +1,11 @@
+name,investment_amount,stage,sector,entry_year,exit_year,entry_valuation,ownership_pct,reserved_capital,expected_multiple
+QuantumAI,2000000,pre_seed,AI/ML,0,9,8000000,0.20,2000000,
+NanoHealth,1500000,pre_seed,biotech,1,10,6000000,0.22,1500000,
+ClimateOS,3000000,seed,climate,0,8,15000000,0.15,3000000,6.0
+SecureVault,2500000,seed,cybersecurity,1,7,12000000,0.14,2000000,
+DataMesh,2000000,seed,saas,2,8,10000000,0.15,1500000,0.0
+HealthStack,5000000,series_a,healthtech,1,7,25000000,0.12,2500000,
+FinanceFlow,4000000,series_a,fintech,0,6,20000000,0.13,2000000,3.0
+LogiRoute,3500000,series_a,logistics,2,7,18000000,0.14,1500000,
+EnterpriseX,7000000,series_b,saas,0,5,50000000,0.09,0,
+GridPower,6000000,series_b,energy,1,6,45000000,0.10,0,1.5
