@@ -236,7 +236,7 @@ class TestSensitivityAnalysis:
     def test_tornado_sorted_by_swing(self, portfolio: Portfolio):
         sa = SensitivityAnalysis(portfolio, n_simulations=300, seed=42)
         df = sa.tornado(
-            ["return_adjustment", "loss_rate_delta", "exit_multiple_adjustment"],
+            ["return_adjustment", "loss_rate_delta", "holding_period"],
             metric="moic_p50",
         )
         swings = df["swing"].tolist()

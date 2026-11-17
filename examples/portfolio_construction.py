@@ -133,11 +133,11 @@ def main() -> None:
     print(sweep_df.to_string(index=False))
 
     tornado_df = sa.tornado(
-        ["return_adjustment", "loss_rate_delta", "exit_multiple_adjustment"],
-        metric="moic_p50",
+        ["return_adjustment", "loss_rate_delta", "holding_period"],
+        metric="irr_p50",
         pct_change=0.25,
     )
-    print("\nTornado Analysis (±25% change):")
+    print("\nTornado Analysis, median IRR (±25% change):")
     print(tornado_df.to_string(index=False))
 
     # -------------------------------------------------------------------
@@ -156,7 +156,7 @@ def main() -> None:
     fig_breakdown.show()
 
     print("Opening tornado chart...")
-    fig_tornado = viz.plot_sensitivity_tornado(tornado_df, metric="moic_p50")
+    fig_tornado = viz.plot_sensitivity_tornado(tornado_df, metric="irr_p50")
     fig_tornado.show()
 
 

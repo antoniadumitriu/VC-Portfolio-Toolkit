@@ -2,7 +2,7 @@
 
 A polished, installable Python library for VC fund portfolio analysis. Models fund returns, J-curves, and portfolio construction scenarios using Monte Carlo simulation.
 
-**Portfolio showcase project demonstrating:** layered architecture · type safety · numerical methods · parallelism · interactive visualization
+**Portfolio showcase project demonstrating:** layered architecture · type safety · numerical methods · vectorized simulation · interactive visualization
 
 ---
 
@@ -11,11 +11,57 @@ A polished, installable Python library for VC fund portfolio analysis. Models fu
 - **J-Curve Modeling** — NAV projection with logistic S-curve appreciation timing
 - **Power Law Exit Simulation** — 4-component mixture (Pareto α=1.5, calibrated to Correlation Ventures data)
 - **Fund Cash Flow Ledger** — Management fees, carry computation, LP IRR with Newton-Raphson + Brent fallback
-- **Monte Carlo Orchestration** — ProcessPoolExecutor parallelism for scenario analysis
+- **Monte Carlo Orchestration** — Vectorized NumPy simulation with common random numbers across scenarios
 - **Fan Charts** — p10/p25/p50/p75/p90 percentile bands (Cambridge Associates standard)
-- **Sensitivity Analysis** — One-way sweeps and tornado charts
+- **Sensitivity Analysis** — One-way sweeps and tornado charts over exit multiples, loss rates and holding periods
 - **PME Benchmarking** — KS-PME, PME Alpha, Direct Alpha vs public market indices
 - **Interactive Visualization** — Professional dark-themed Plotly charts
+
+---
+
+## Interactive app
+
+Analyze any portfolio in the browser: start from a sample, edit the table directly, or upload a CSV or Excel file with one row per company.
+
+```bash
+pip install -e ".[app]"
+streamlit run streamlit_app.py
+```
+
+What it shows:
+- **Return distribution**: simulated MOIC and IRR, percentiles, chance of losing money or returning 3x+, 95% VaR and CVaR
+- **Scenarios**: Bear / Base / Bull with adjustable exit multiples, loss rates and exit timing
+- **Sensitivity**: tornado chart of which assumption moves median IRR, MOIC or loss probability most
+- **J-curve**: quarterly fund value with fees, from each company's expected multiple (or the stage average)
+- **Portfolio**: breakdown by stage or sector, concentration
+
+Every table and result can be downloaded as CSV. Uploaded data lives only in the browser session and is never stored.
+
+**Input format** (see `examples/sample_portfolio.csv`, or download the template in the app):
+
+| Column | Required | Notes |
+|---|---|---|
+| `name` | yes | |
+| `investment_amount` | yes | `2000000`, `2,000,000` or `$2M` |
+| `stage` | yes | `pre_seed`, `seed`, `series_a`, `series_b`, `series_c`, `growth` ("Series A" also works) |
+| `entry_year`, `exit_year` | yes | years from fund start, fractions allowed |
+| `sector` | no | |
+| `entry_valuation`, `reserved_capital` | no | |
+| `ownership_pct` | no | `0.15`, `15` or `15%` |
+| `expected_multiple` | no | J-curve only; blank uses the stage average |
+
+Common header variants (`Company`, `Amount`, `Ownership`, `Exit Year`, ...) are recognized. Problems are reported row by row.
+
+The same loader works in Python:
+
+```python
+from vc_portfolio import Portfolio
+portfolio = Portfolio.from_csv("my_portfolio.csv", seed=42)
+```
+
+### Deploying
+
+The repo is ready for [Streamlit Community Cloud](https://streamlit.io/cloud) (free): create an app from this repository with `streamlit_app.py` as the main file. `requirements.txt` installs the library and the app's dependencies, and `.streamlit/config.toml` sets the theme.
 
 ---
 
@@ -139,23 +185,29 @@ Unidirectional dependencies — `metrics.py` is pure math with no library import
 | `jcurve.py` | NAV projection | `JCurve`, `CompanyTimeline` |
 | `scenarios.py` | Monte Carlo orchestration | `ScenarioSet`, `MonteCarloSimulator`, `SensitivityAnalysis` |
 | `visualization.py` | Plotly figure factories | 8 chart functions |
+| `streamlit_app.py` | Interactive web app | |
 
 ---
 
 ## Design Decisions
 
 ### Power Law Exit Distribution
-Exit multiples use a 4-component mixture calibrated to empirical VC data:
-- **p_loss × 0x** — Complete losses (stage-dependent: 15%–65%)
-- **20% × Uniform(0.5, 1.5)** — Zombie returns (marginal outcomes)
-- **60% × LogNormal(μ=0.69, σ=0.85)** — Successful outcomes (median ≈ 2x)
-- **Pareto(α=1.5, xm=2x)** — Power law tail (home runs)
+Exit multiples use a 4-component mixture calibrated to empirical VC data. Weights are shares of all outcomes:
+- **p_loss → 0x**: complete losses (stage loss rate, 15% at growth to 65% at pre-seed, adjustable per scenario)
+- **min(20%, 25% × (1 − p_loss)) → Uniform(0.5, 1.5)**: zombie returns
+- **65% × (1 − p_loss) → LogNormal(μ = ln 2, σ = 0.85)**: typical successes, median 2x
+- **remainder → Pareto(α = 1.5, xm = 2x)**: power law tail (home runs)
 
 ### IRR Computation
-Newton-Raphson with analytical Jacobian, with Brent's method as fallback for edge cases (flat curves, multiple roots).
+`calc_irr` uses Newton-Raphson with an analytical derivative, with Brent's method as fallback for edge cases (flat curves, multiple roots). Simulated portfolios use the vectorized solver described below.
 
-### Parallelism
-Monte Carlo uses `ProcessPoolExecutor` (not `ThreadPoolExecutor`) to bypass the GIL for CPU-bound numerical simulation.
+### Simulation and IRR
+Exit multiples for all simulations are drawn at once as NumPy arrays. Portfolio IRR is solved from each simulation's actual cash flows (investment at entry, proceeds at exit, in years) with a vectorized grid search plus bisection, picking the root closest to 0% when staggered deals produce more than one.
+
+Scenarios and sensitivity runs reuse one seed (common random numbers), so differences between them come from the assumptions, not from sampling noise.
+
+### Units
+`Company` entry and exit periods are in years. `Scenario.exit_timing_adjustment` is in quarters and is converted to years. `JCurve` runs on a quarterly grid by default and reports an annualized rolling IRR. Net TVPI and DPI in the J-curve use paid-in capital including management fees, which is what produces the early dip.
 
 ### Type Safety
 `from __future__ import annotations`, `npt.NDArray[np.float64]`, `Literal` types throughout. mypy strict mode compatible.

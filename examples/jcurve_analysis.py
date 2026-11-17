@@ -186,8 +186,8 @@ def main() -> None:
                 stage="seed" if tl.entry_period < 8 else "series_a" if tl.entry_period < 14 else "series_b",
                 sector="diversified",
                 entry_valuation=tl.total_investment * 5,  # approximate
-                entry_period=tl.entry_period // 4,  # convert quarters → years
-                expected_exit_period=tl.exit_period // 4,
+                entry_period=tl.entry_period / 4,  # convert quarters to years
+                expected_exit_period=tl.exit_period / 4,
                 ownership_pct=0.10,
             )
         )

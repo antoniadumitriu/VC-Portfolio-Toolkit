@@ -359,6 +359,7 @@ def plot_return_distribution(
     simulations: dict,
     metric: Literal["moic", "irr"] = "moic",
     title: Optional[str] = None,
+    clip_percentile: Optional[float] = 99.0,
 ) -> go.Figure:
     """
     Histogram with Gaussian KDE overlay for return distribution.
@@ -367,6 +368,10 @@ def plot_return_distribution(
     ----------
     simulations:
         Output of Portfolio.simulate_exits() (must have 'raw_moics' or 'raw_irrs').
+    clip_percentile:
+        Show the x-axis between the (100 - p)th and pth percentiles so a few
+        extreme outcomes do not squash the chart. Bins and KDE cover the visible range. None
+        shows everything. The median line always uses all outcomes.
     metric:
         'moic' or 'irr'
     title:
@@ -383,13 +388,21 @@ def plot_return_distribution(
     metric_label = "MOIC (x)" if metric == "moic" else "IRR"
     chart_title = title or f"Return Distribution — {metric_label}"
 
+    if clip_percentile:
+        lo, hi = (float(v) for v in np.percentile(raw, [100 - clip_percentile, clip_percentile]))
+    else:
+        lo, hi = float(raw.min()), float(raw.max())
+    if hi <= lo:
+        hi = lo + 1e-9
+    bin_size = (hi - lo) / 60
+
     fig = go.Figure()
 
-    # Histogram
+    # Histogram over the visible range
     fig.add_trace(
         go.Histogram(
             x=raw,
-            nbinsx=80,
+            xbins=dict(start=lo, end=hi + bin_size, size=bin_size),
             name="Simulated outcomes",
             marker_color=_VC_COLORS["accent"],
             opacity=0.6,
@@ -401,7 +414,7 @@ def plot_return_distribution(
     # KDE overlay
     try:
         kde = gaussian_kde(raw, bw_method="scott")
-        x_range = np.linspace(raw.min(), raw.max(), 200)
+        x_range = np.linspace(lo, hi, 300)
         kde_values = kde(x_range)
         fig.add_trace(
             go.Scatter(
@@ -421,7 +434,7 @@ def plot_return_distribution(
         x=median,
         line_dash="dash",
         line_color=_VC_COLORS["positive"],
-        annotation_text=f"Median: {median:.2f}",
+        annotation_text=f"Median: {median:.2f}x" if metric == "moic" else f"Median: {median:.1%}",
         annotation_position="top right",
     )
 
@@ -441,6 +454,9 @@ def plot_return_distribution(
         yaxis_title="Probability Density",
         bargap=0.02,
     )
+    fig.update_xaxes(range=[lo - 0.02 * (hi - lo), hi])
+    if metric == "irr":
+        fig.update_xaxes(tickformat=".0%")
 
     return _apply_vc_theme(fig)
 
@@ -573,54 +589,38 @@ def plot_sensitivity_tornado(
 
     fig = go.Figure()
 
-    # Base case (midpoint)
-    base = df[["low_value", "high_value"]].mean(axis=1)
+    # True base case if the analysis provides it, otherwise the midpoint
+    if "base_value" in df.columns:
+        base = float(df["base_value"].iloc[0])
+    else:
+        base = float(df[["low_value", "high_value"]].mean(axis=1).mean())
 
-    for _, row in df.iterrows():
-        # Downside bar (low_value to base)
+    # Bars are colored by the direction of the assumption change, not by
+    # whether the result is better or worse (raising loss rates hurts,
+    # raising exit multiples helps).
+    for label, col, color in [
+        ("Assumption lowered", "low_value", _VC_COLORS["neutral"]),
+        ("Assumption raised", "high_value", _VC_COLORS["accent"]),
+    ]:
         fig.add_trace(
             go.Bar(
-                y=[row["parameter"]],
-                x=[base.iloc[df.index.get_loc(_)] - row["low_value"]],
-                base=[row["low_value"]],
+                y=df["parameter"],
+                x=df[col] - base,
+                base=[base] * len(df),
                 orientation="h",
-                marker_color=_VC_COLORS["negative"],
-                opacity=0.8,
-                showlegend=False,
-                name="Downside",
+                marker_color=color,
+                opacity=0.85,
+                name=label,
+                customdata=df[[col, "swing"]].to_numpy(),
                 hovertemplate=(
-                    f"{row['parameter']}<br>"
-                    f"Low: {row['low_value']:.2f}<br>"
-                    f"Swing: {row['swing']:.2f}"
-                    "<extra></extra>"
+                    "%{y}<br>" + label + ": %{customdata[0]:.4g}"
+                    "<br>Swing: %{customdata[1]:.4g}<extra></extra>"
                 ),
             )
         )
 
-        # Upside bar (base to high_value)
-        fig.add_trace(
-            go.Bar(
-                y=[row["parameter"]],
-                x=[row["high_value"] - base.iloc[df.index.get_loc(_)]],
-                base=[base.iloc[df.index.get_loc(_)]],
-                orientation="h",
-                marker_color=_VC_COLORS["positive"],
-                opacity=0.8,
-                showlegend=False,
-                name="Upside",
-                hovertemplate=(
-                    f"{row['parameter']}<br>"
-                    f"High: {row['high_value']:.2f}<br>"
-                    f"Swing: {row['swing']:.2f}"
-                    "<extra></extra>"
-                ),
-            )
-        )
-
-    # Base case vertical line
-    mean_base = float(base.mean())
     fig.add_vline(
-        x=mean_base,
+        x=base,
         line_dash="dash",
         line_color=_VC_COLORS["text_secondary"],
         annotation_text="Base",
@@ -630,7 +630,9 @@ def plot_sensitivity_tornado(
         title=title,
         xaxis_title=metric.replace("_", " ").title(),
         yaxis_title="Parameter",
+        yaxis=dict(autorange="reversed"),
         barmode="overlay",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
     )
 
     return _apply_vc_theme(fig)

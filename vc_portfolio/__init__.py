@@ -16,7 +16,13 @@ from __future__ import annotations
 # Core data classes and engines
 from vc_portfolio.fund import Fund, FundConfig
 from vc_portfolio.jcurve import CompanyTimeline, JCurve
-from vc_portfolio.portfolio import Company, Portfolio, STAGE_LOSS_RATES
+from vc_portfolio.portfolio import (
+    STAGE_LOSS_RATES,
+    Company,
+    Portfolio,
+    PortfolioInputError,
+    parse_portfolio_table,
+)
 from vc_portfolio.scenarios import (
     BASE_SCENARIO,
     BEAR_SCENARIO,
@@ -43,6 +49,8 @@ __all__ = [
     "Company",
     "Portfolio",
     "STAGE_LOSS_RATES",
+    "PortfolioInputError",
+    "parse_portfolio_table",
     # J-Curve
     "CompanyTimeline",
     "JCurve",
