@@ -13,6 +13,12 @@ import pandas as pd
 
 from vc_portfolio.metrics import calc_irr, calc_dpi, calc_tvpi
 
+# Share of a losing company's holding period over which it is written down
+WRITE_DOWN_FRACTION = 0.5
+# Share of a winning company's holding period held at cost before mark-ups
+# begin (cost is the usual fair value estimate until a new round or milestone)
+HOLD_AT_COST_FRACTION = 0.25
+
 
 @dataclass
 class CompanyTimeline:
@@ -95,9 +101,9 @@ class JCurve:
 
     def _compute_scurve_weight(
         self,
-        t: int,
-        entry: int,
-        exit_period: int,
+        t: float,
+        entry: float,
+        exit_period: float,
         steepness: float = 6.0,
     ) -> float:
         """
@@ -120,7 +126,7 @@ class JCurve:
         Returns
         -------
         float
-            Weight in [0, 1]. Returns 0 before entry, approaches 1 near exit.
+            Weight in [0, 1]: 0 up to and including entry, 1 from exit on.
         """
         if t < entry:
             return 0.0
@@ -131,10 +137,14 @@ class JCurve:
         if duration <= 0:
             return 1.0
 
-        # Normalize to [-steepness/2, steepness/2]
+        # Logistic over [-steepness/2, steepness/2], rescaled so the weight is
+        # exactly 0 at entry (held at cost) and exactly 1 at exit.
         progress = (t - entry) / duration  # 0 to 1
         x = steepness * (progress - 0.5)
-        return float(1.0 / (1.0 + np.exp(-x)))
+        lo = 1.0 / (1.0 + np.exp(steepness / 2))
+        hi = 1.0 / (1.0 + np.exp(-steepness / 2))
+        raw = 1.0 / (1.0 + np.exp(-x))
+        return float((raw - lo) / (hi - lo))
 
     def _compute_company_nav(
         self,
@@ -145,7 +155,11 @@ class JCurve:
         Compute mark-to-market NAV for a single company at a given period.
 
         Before entry: 0
-        During holding: S-curve appreciation from cost basis to expected exit value
+        During holding, winners (multiple >= 1): held at cost for the first
+            quarter of the holding period, then an S-curve mark-up toward
+            exit_multiple x capital invested to date
+        During holding, losers (multiple < 1): linear write-down over the
+            first half of the holding period
         After exit: 0 (realized)
 
         Parameters
@@ -169,13 +183,25 @@ class JCurve:
             if fo_period <= period:
                 cost_basis += fo_amount
 
-        # Appreciation weight from S-curve
-        weight = self._compute_scurve_weight(
-            period, timeline.entry_period, timeline.exit_period
-        )
+        # Target value of the capital invested so far (future follow-ons are
+        # not marked before they are made)
+        expected_value = cost_basis * timeline.exit_multiple
 
-        # Mark-to-market: interpolate between cost and expected exit value
-        expected_value = timeline.total_investment * timeline.exit_multiple
+        if timeline.exit_multiple < 1.0:
+            # Write-downs are recognized early: linearly over the first half
+            # of the holding period, as is usual under conservative marks.
+            duration = timeline.exit_period - timeline.entry_period
+            progress = (period - timeline.entry_period) / duration if duration > 0 else 1.0
+            weight = min(1.0, progress / WRITE_DOWN_FRACTION)
+        else:
+            # Held at cost at first, then marked up along a logistic S-curve
+            markup_start = timeline.entry_period + HOLD_AT_COST_FRACTION * (
+                timeline.exit_period - timeline.entry_period
+            )
+            weight = self._compute_scurve_weight(
+                period, markup_start, timeline.exit_period
+            )
+
         nav = cost_basis + weight * (expected_value - cost_basis)
 
         return max(0.0, nav)
@@ -253,27 +279,31 @@ class JCurve:
             cost_basis_arr[t] = period_cost
             nav_arr[t] = period_unrealized  # NAV = unrealized portion only
 
-        # Cumulative metrics
+        # Cumulative metrics. LPs pay in both capital calls and fees, so
+        # paid-in capital includes fees; this is what creates the J-curve dip.
         cum_called = np.cumsum(capital_calls)
+        cum_fees = np.cumsum(fees)
+        cum_paid_in = cum_called + cum_fees
         cum_dist = np.cumsum(distributions)
         net_cf = distributions - capital_calls - fees
 
-        # Rolling IRR and return multiples
+        # Rolling IRR (annualized) and net return multiples
         rolling_irr = np.full(n, float("nan"), dtype=np.float64)
         tvpi_arr = np.zeros(n, dtype=np.float64)
         dpi_arr = np.zeros(n, dtype=np.float64)
 
-        for t in range(1, n):
+        for t in range(n):
             if cum_called[t] > 0:
-                tvpi_arr[t] = (nav_arr[t] + cum_dist[t]) / cum_called[t]
-                dpi_arr[t] = cum_dist[t] / cum_called[t]
+                tvpi_arr[t] = (nav_arr[t] + cum_dist[t]) / cum_paid_in[t]
+                dpi_arr[t] = cum_dist[t] / cum_paid_in[t]
 
-                # Rolling IRR: use cashflows up to period t + terminal NAV
+            if t > 0 and cum_called[t] > 0:
+                # Cash flows up to period t, with NAV as a terminal value
                 cf_slice = net_cf[: t + 1].copy()
-                cf_slice[t] += nav_arr[t]  # add terminal NAV to last period
-                irr = calc_irr(cf_slice)
-                if not np.isnan(irr) and -1 < irr < 100:
-                    rolling_irr[t] = irr
+                cf_slice[t] += nav_arr[t]
+                irr_per_period = calc_irr(cf_slice)
+                if not np.isnan(irr_per_period) and -1 < irr_per_period < 100:
+                    rolling_irr[t] = (1 + irr_per_period) ** periods_per_year - 1
 
         return pd.DataFrame(
             {
@@ -287,6 +317,8 @@ class JCurve:
                 "mgmt_fees": fees,
                 "net_cashflow": net_cf,
                 "cumulative_called": cum_called,
+                "cumulative_fees": cum_fees,
+                "cumulative_paid_in": cum_paid_in,
                 "cumulative_distributions": cum_dist,
                 "rolling_irr": rolling_irr,
                 "tvpi": tvpi_arr,
@@ -305,16 +337,18 @@ class JCurve:
         Returns
         -------
         dict with:
-            trough_period: period of minimum NAV (net of fees)
-            trough_nav: NAV value at trough
-            breakeven_period: first period where cumulative NAV ≥ cost basis
+            trough_period: period of lowest net value (NAV + distributions - paid-in)
+            trough_nav: net value at the trough (negative while under water)
+            breakeven_period: first period where net TVPI >= 1
             peak_nav: maximum NAV achieved
             peak_period: period of maximum NAV
         """
         df = self.project()
 
-        # Trough: minimum net cashflow position (before distributions dominate)
-        cumulative_value = df["nav"] + df["cumulative_distributions"] - df["cumulative_called"]
+        # Trough: lowest net value to LPs (NAV + distributions - paid-in incl. fees)
+        cumulative_value = (
+            df["nav"] + df["cumulative_distributions"] - df["cumulative_paid_in"]
+        )
         trough_idx = int(cumulative_value.idxmin())
         trough_nav = float(cumulative_value.iloc[trough_idx])
 

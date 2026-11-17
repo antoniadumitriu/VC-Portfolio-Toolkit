@@ -55,11 +55,15 @@ def calc_irr(
     if not (np.any(cashflows > 0) and np.any(cashflows < 0)):
         return float("nan")
 
+    # Newton can step into regions where (1 + r) ** t overflows; those steps
+    # fail cleanly and fall through to the bracketed Brent search below.
     def npv_func(r: float) -> float:
-        return float(np.sum(cashflows / (1 + r) ** periods))
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            return float(np.sum(cashflows / (1 + r) ** periods))
 
     def dnpv_func(r: float) -> float:
-        return float(np.sum(-periods * cashflows / (1 + r) ** (periods + 1)))
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            return float(np.sum(-periods * cashflows / (1 + r) ** (periods + 1)))
 
     # Attempt Newton-Raphson first
     try:
