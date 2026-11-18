@@ -8,12 +8,28 @@ Public API surface:
     from vc_portfolio import JCurve, CompanyTimeline
     from vc_portfolio import ScenarioSet, MonteCarloSimulator, SensitivityAnalysis
     from vc_portfolio import BEAR_SCENARIO, BASE_SCENARIO, BULL_SCENARIO
+    from vc_portfolio import CapTable, Convertible, RoundTerms, price_round, waterfall
     from vc_portfolio import metrics
     from vc_portfolio import visualization as viz
 """
 from __future__ import annotations
 
 # Core data classes and engines
+from vc_portfolio.founder import (
+    CapTable,
+    Convertible,
+    ExitAssumptions,
+    RoundInputError,
+    RoundResult,
+    RoundTerms,
+    ShareClass,
+    add_later_rounds,
+    breakpoints,
+    founder_outcome,
+    negotiation_levers,
+    price_round,
+    waterfall,
+)
 from vc_portfolio.fund import Fund, FundConfig
 from vc_portfolio.jcurve import CompanyTimeline, JCurve
 from vc_portfolio.portfolio import (
@@ -35,6 +51,7 @@ from vc_portfolio.scenarios import (
 )
 
 # Submodules available for direct import
+from vc_portfolio import founder
 from vc_portfolio import metrics
 from vc_portfolio import visualization
 
@@ -63,7 +80,22 @@ __all__ = [
     "BEAR_SCENARIO",
     "BASE_SCENARIO",
     "BULL_SCENARIO",
+    # Founder round modeling
+    "CapTable",
+    "Convertible",
+    "ExitAssumptions",
+    "RoundInputError",
+    "RoundResult",
+    "RoundTerms",
+    "ShareClass",
+    "add_later_rounds",
+    "breakpoints",
+    "founder_outcome",
+    "negotiation_levers",
+    "price_round",
+    "waterfall",
     # Submodules
+    "founder",
     "metrics",
     "visualization",
     # Version

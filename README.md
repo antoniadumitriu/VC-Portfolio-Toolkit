@@ -59,6 +59,33 @@ from vc_portfolio import Portfolio
 portfolio = Portfolio.from_csv("my_portfolio.csv", seed=42)
 ```
 
+### Founder Round Modeler
+
+A second page in the app, `pages/founder_round_modeler.py`, looks at one company from the founder's side. Enter your cap table, any SAFEs and notes, and two term sheets to see:
+
+- **The round**: price per share, post-money, founder ownership, and the effective pre-money after the option pool and converting securities, plus the pre-money needed to hold a target stake
+- **Who gets paid**: founder proceeds at every exit value through the full liquidation waterfall
+- **Exit odds**: the chance of reaching a payout, with both offers run on the same simulated exits
+- **What to negotiate**: what each term is worth to founders, next to a 10% higher valuation
+- **Investor math**: the exit needed for 1x, 3x, 10x and to return the fund
+- **Down round**: founder ownership under each type of antidilution protection
+
+The same logic is available in Python:
+
+```python
+from vc_portfolio import CapTable, Convertible, RoundTerms, price_round, waterfall
+
+company = CapTable(founders=8_000_000, available_options=1_000_000)
+safe = Convertible("Seed SAFE", 500_000, cap=6_000_000)
+terms = RoundTerms(3_000_000, 12_000_000, option_pool_target=0.10, convertibles=(safe,))
+
+result = price_round(company, terms)
+print(result.price, result.founder_ownership, result.effective_pre_money)
+print(waterfall(result.after, [25_000_000, 100_000_000]).founders)
+```
+
+Round mechanics and waterfalls follow Dave Lishego, *The Founder's Guide to VC Finance* (2017), and post-money SAFE conversion follows Y Combinator's SAFE documentation. Taxes, debt, deal fees and option strike proceeds are ignored. This is for education and planning, not legal or investment advice.
+
 ### Deploying
 
 The repo is ready for [Streamlit Community Cloud](https://streamlit.io/cloud) (free): create an app from this repository with `streamlit_app.py` as the main file. `requirements.txt` installs the library and the app's dependencies, and `.streamlit/config.toml` sets the theme.

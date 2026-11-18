@@ -191,6 +191,9 @@ def run_jcurve(clean: pd.DataFrame, committed: float, fee_rate: float) -> tuple[
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
+    st.page_link("streamlit_app.py", label="Portfolio analysis")
+    st.page_link("pages/founder_round_modeler.py", label="Founder round modeler")
+
     st.header("Portfolio")
     source = st.radio("Start from", ["Sample portfolio", "Upload a file", "Blank template"])
     upload = None
